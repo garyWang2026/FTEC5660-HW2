@@ -1,4 +1,5 @@
 .env
 .venv/
+.venv_broken*/
 __pycache__/
-results.csv
+.DS_Store

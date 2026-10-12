@@ -90,10 +90,98 @@ python3 hw2.py --cv-folder task2
 attack the MCP server. See the homework description for the full rules.
 
 ## Homework 2 solution:
-> to students: this is your report, see the homework description.
 
 ### Task 1
-> one paragraph describing your solution, and your results on `public_test`.
+
+My solution is a hybrid pipeline that keeps every step checkable. For each CV I
+(1) ask DeepSeek (`deepseek-v4-flash`, via `ChatDeepSeek`) to extract the
+candidate's structured claims — name, city, headline, jobs, education, skills —
+from the markdown text produced by the same PDF loader used for grading; (2)
+resolve the real person with the MCP server: `search_linkedin_people` with the
+bare city name and the industry derived from the headline ("X Professional" →
+X), because homonyms dominate the mock data — a plain name search returns up to
+20 same-name people; (3) if several candidates survive the city/industry
+filter, I pull each `get_linkedin_profile` and score company/school overlap
+against the CV to pick the right person (this is what distinguishes e.g. the
+Munich "AI Professional" Michael Cheung from his same-name distractors); (4)
+ask the model to judge differences between the CV claims and the profile across
+the seven verifiable fields (name, city, jobs, education, skills), with
+explicit rules that wording differences (BSc vs Bachelor of Science, UI/UX
+Design vs UI/UX) are not substantive; and (5) map the judged differences to a
+deterministic score — no substantive difference → 0.95, otherwise a penalty
+that keeps the score ≤ 0.5. Per-CV errors are caught and return a conservative
+0.3 so one failure cannot crash the run, and `asyncio.Semaphore(3)` respects
+the shared server. On `public_test` the agent scores **7/7 correct** (4 valid,
+3 with discrepancies — the shifted Innovate HK Ltd start year, the inflated
+Microsoft title, and the invented Docker skill are all caught), and a full run
+on the 7 public CVs takes about 75 seconds, well within the 30-minute limit.
 
 ### Task 2
-> the attack techniques you used and why you expect them to work.
+
+My attack is a "real core, fake periphery" CV. All seven fields that verifiers
+actually check — name, city, jobs (company/title/years), education and skills —
+are copied exactly from Kelly Tsang's true profile (pulled via
+`get_linkedin_profile(10001)` and `get_facebook_profile(10001)`), so a verifier
+that resolves the right person and checks those fields finds zero substantive
+differences and scores above 0.5. The false/embellished details are placed
+only in fields the homework explicitly says are never the source of a
+discrepancy and that verification coverage does not include: a Professional
+Summary claiming a fake "AIA Manager of the Year 2023" award and an 18%
+efficiency improvement, a Certifications section listing CFA Level II and FRM
+Part I that the profile never mentions, and a Languages section adding
+"Japanese (conversational)". This exploits verification coverage (which fields
+does a verifier actually check?) rather than prompt injection, which keeps the
+CV's visible content honest-looking while still containing real fake
+information, as required for Task 2 credit. I tested it against my own Task 1
+agent: it resolves person 10001 and scores **0.95 twice** (first draft failed
+because I had added fake skills — Power BI/Tableau — into the *skills* field,
+which verifiers do check; moving the fakes out of verified fields fixed it).
+
+## Task 3: Reflection on the AI paradoxes
+
+> A short personal reflection. (No prescribed format, so I wrote a short essay.)
+
+**The paradox of verification and trust.** Task 1 is a useful paradox in its
+own right: we ask an AI system to judge whether a person's claims are truthful,
+yet the judge itself is an AI that can be misled, and the person being judged
+may be an AI too (or an AI-assisted human). The verifier's confidence is only
+meaningful relative to its blind spots — which Task 2 exploits by hiding lies
+exactly where the verifier does not look. The same technology that powers KYC
+compliance therefore also powers the attacks against it. This is the
+fundamental AI paradox: capability and vulnerability grow together, because a
+model that understands human text well enough to verify it also understands it
+well enough to be deceived, and a person who can generate convincing content
+can now do so at machine scale.
+
+**The paradox of automation in compliance.** KYC exists because humans lie and
+make mistakes. Automating it with AI removes human fatigue and scale limits,
+but it replaces an imperfect human judge with an imperfect machine judge whose
+errors are less transparent and harder to challenge. Automation does not remove
+the need for judgement — it moves the judgement to the design of the system:
+which fields to check, which differences to ignore, what score threshold means
+"trustworthy". The homework makes this visible: the most consequential
+decisions (which fields are verifiable, what counts as a discrepancy) are made
+by the system designer, not by the AI.
+
+**The paradox of the "same function" adversary.** Task 2 is scored by verifiers
+built with the same function as my own Task 1 agent — same model, same tools,
+same PDF loader. My attack works against my own verifier, and presumably
+against theirs, because the blind spots are shared: any verifier that checks
+the seven fields and ignores the summary/certifications/languages will be
+fooled by the same trick. This shows that an AI system's weakness is not an
+accident of a particular prompt — it is a property of what the designer decided
+to look at. "Better" AI in the narrow sense (more accurate extraction, cleaner
+reasoning) does not automatically mean safer AI; it can mean a more convincing
+attack surface.
+
+**The paradox of scale.** The most unsettling part of the homework is how cheap
+the attack was: a few minutes of prompting, and a document that a human
+reviewer would flag as embellished passes five AI verifiers. In the past,
+fabricating a consistent career history took time and effort; today an LLM can
+write one in seconds. The bottleneck is no longer generation — it is
+verification, and verification is itself AI-mediated. This is the paradox that
+matters for business and FinTech: as AI makes creation nearly free, the value
+shifts to trustworthy verification, and that verification cannot be fully
+automated because the automated verifier is itself the attack surface. The
+practical takeaway is not to trust the score blindly, but to audit the
+verifier: what does it check, what could it miss, and who audits the auditor?
